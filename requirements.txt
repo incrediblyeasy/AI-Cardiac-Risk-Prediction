@@ -14,5 +14,8 @@ wfdb>=4.1
 # Signal-to-image transforms (RP / GAF / MTF) — used from Day 3 onward
 pyts>=0.13
 
+# Visualization (sample transform figures under docs/figures/)
+matplotlib>=3.7
+
 # Testing
 pytest>=8.0

@@ -16,7 +16,7 @@ Scope: this covers the core technical build of Paper 1 (EchoFuseNet) — environ
 |---|---|---|---|
 | 1 | Environment & Repo Setup + Data Acquisition | ✅ | 2026-07-01 |
 | 2 | Patient-Level Split & Leakage Guard | ✅ | 2026-07-01 |
-| 3 | Recurrence Plot (RP) Transform | ⬜ | |
+| 3 | Recurrence Plot (RP) Transform | ✅ | 2026-07-01 |
 | 4 | Gramian Angular Field (GAF) Transform | ⬜ | |
 | 5 | Markov Transition Field (MTF) Transform | ⬜ | |
 | 6 | Data Pipeline Integration | ⬜ | |
