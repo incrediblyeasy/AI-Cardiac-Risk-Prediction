@@ -1,0 +1,23 @@
+# Raw / processed datasets — never commit (large, license-bound)
+data/raw/
+data/processed/
+*.dat
+*.atr
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Model artifacts & logs
+checkpoints/
+runs/
+*.pt
+*.pth
+
+# OS / editor
+.DS_Store
+Thumbs.db

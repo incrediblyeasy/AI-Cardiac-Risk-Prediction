@@ -1,0 +1,18 @@
+# EchoFuseNet (Paper 1) — core dependencies
+# Python 3.11. Pins reflect the versions validated on Day 1.
+
+# Deep learning
+torch>=2.2
+
+# Numerics / signal processing
+numpy>=1.26
+scipy>=1.11
+
+# ECG record I/O (MIT-BIH, INCART, PTB-XL are WFDB-format)
+wfdb>=4.1
+
+# Signal-to-image transforms (RP / GAF / MTF) — used from Day 3 onward
+pyts>=0.13
+
+# Testing
+pytest>=8.0

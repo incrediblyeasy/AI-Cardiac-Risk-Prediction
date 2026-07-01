@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "echofusenet"
+version = "0.1.0"
+description = "EchoFuseNet (Paper 1) — multimodal ECG arrhythmia classification via RP/GAF/MTF fusion"
+requires-python = ">=3.11"
+readme = "New folder/README.md"
+dependencies = [
+    "torch>=2.2",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "wfdb>=4.1",
+    "pyts>=0.13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+include = ["paper1_echofusenet*", "shared*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
