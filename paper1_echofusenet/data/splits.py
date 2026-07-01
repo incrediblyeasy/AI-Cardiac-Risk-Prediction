@@ -50,9 +50,37 @@ def split_for(record: int) -> str:
     raise ValueError(f"{record} is not a MIT-BIH Arrhythmia DB record id")
 
 
+def records_for_fold(fold: str) -> tuple[int, ...]:
+    """Return the record ids belonging to ``"DS1"`` (train) or ``"DS2"`` (test)."""
+    key = fold.upper()
+    if key == "DS1":
+        return DS1_PATIENTS
+    if key == "DS2":
+        return DS2_PATIENTS
+    raise ValueError(f'fold must be "DS1" or "DS2", got {fold!r}')
+
+
 def assert_no_leakage() -> None:
     """Fail loudly if DS1 and DS2 share any patient id. Called by the Day-2
     leakage test, but cheap enough to keep as a self-check here."""
     overlap = set(DS1_PATIENTS) & set(DS2_PATIENTS)
     if overlap:
         raise AssertionError(f"DS1/DS2 patient overlap detected: {sorted(overlap)}")
+
+
+def assert_patient_disjoint(train_records: object, test_records: object) -> None:
+    """Assert that no patient id appears in both the train and test collections.
+
+    This is the leakage guard meant to run on *every* future data-pipeline
+    change. It accepts any iterables of record ids — patient-id lists, or the
+    ids carried by extracted beat segments — so it catches leakage at whatever
+    stage it is called. Raises ``AssertionError`` on any overlap.
+    """
+    train_ids = set(train_records)  # type: ignore[arg-type]
+    test_ids = set(test_records)  # type: ignore[arg-type]
+    overlap = train_ids & test_ids
+    if overlap:
+        raise AssertionError(
+            f"Patient leakage: {len(overlap)} id(s) in both train and test: "
+            f"{sorted(overlap)}"
+        )
