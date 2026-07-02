@@ -17,10 +17,10 @@ Scope: this covers the core technical build of Paper 1 (EchoFuseNet) — environ
 | 1 | Environment & Repo Setup + Data Acquisition | ✅ | 2026-07-01 |
 | 2 | Patient-Level Split & Leakage Guard | ✅ | 2026-07-01 |
 | 3 | Recurrence Plot (RP) Transform | ✅ | 2026-07-01 |
-| 4 | Gramian Angular Field (GAF) Transform | ⬜ | |
-| 5 | Markov Transition Field (MTF) Transform | ⬜ | |
-| 6 | Data Pipeline Integration | ⬜ | |
-| 7 | Branch 1 CNN (Depthwise Separable Convs) | ⬜ | |
+| 4 | Gramian Angular Field (GAF) Transform | ✅ | 2026-07-02 |
+| 5 | Markov Transition Field (MTF) Transform | ✅ | 2026-07-02 |
+| 6 | Data Pipeline Integration | ✅ | 2026-07-02 |
+| 7 | Branch 1 CNN (Depthwise Separable Convs) | ✅ | 2026-07-02 |
 | 8 | Branch 2 & 3 + Late Fusion | ⬜ | |
 | 9 | Training Loop & Config System | ⬜ | |
 | 10 | First Full Training Run (DS1/DS2) | ⬜ | |
