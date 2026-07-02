@@ -10,6 +10,14 @@ from .beats import (
     extract_beats,
     load_fold,
 )
+from .dataset import (
+    CHANNEL_NAMES,
+    MultimodalBeatDataset,
+    beat_to_channels,
+    build_dataloaders,
+    oversample_beats,
+    oversample_indices,
+)
 from .mitbih import Beat, Record, class_distribution, load_record
 from .splits import (
     DS1_PATIENTS,
@@ -48,4 +56,11 @@ __all__ = [
     "load_fold",
     "build_split",
     "class_counts",
+    # multimodal dataset / dataloader
+    "CHANNEL_NAMES",
+    "MultimodalBeatDataset",
+    "beat_to_channels",
+    "build_dataloaders",
+    "oversample_beats",
+    "oversample_indices",
 ]
