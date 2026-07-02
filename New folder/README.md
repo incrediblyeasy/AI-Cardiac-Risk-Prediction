@@ -21,7 +21,7 @@ Scope: this covers the core technical build of Paper 1 (EchoFuseNet) — environ
 | 5 | Markov Transition Field (MTF) Transform | ✅ | 2026-07-02 |
 | 6 | Data Pipeline Integration | ✅ | 2026-07-02 |
 | 7 | Branch 1 CNN (Depthwise Separable Convs) | ✅ | 2026-07-02 |
-| 8 | Branch 2 & 3 + Late Fusion | ⬜ | |
+| 8 | Branch 2 & 3 + Late Fusion | ✅ | 2026-07-02 |
 | 9 | Training Loop & Config System | ⬜ | |
 | 10 | First Full Training Run (DS1/DS2) | ⬜ | |
 | 11 | k-Fold CV + Statistical Significance | ⬜ | |
