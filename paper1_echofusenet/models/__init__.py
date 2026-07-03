@@ -6,6 +6,12 @@ three-branch late-fusion classifier assembled from those branches.
 """
 
 from .branch import CNNBranch, DepthwiseSeparableConv, count_parameters
-from .echofusenet import EchoFuseNet
+from .echofusenet import CANONICAL_MODALITIES, EchoFuseNet
 
-__all__ = ["CNNBranch", "DepthwiseSeparableConv", "count_parameters", "EchoFuseNet"]
+__all__ = [
+    "CNNBranch",
+    "DepthwiseSeparableConv",
+    "count_parameters",
+    "EchoFuseNet",
+    "CANONICAL_MODALITIES",
+]

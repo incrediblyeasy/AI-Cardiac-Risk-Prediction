@@ -1,0 +1,39 @@
+{
+  "data": {
+    "batch_size": 32,
+    "oversample": true,
+    "normalize": true,
+    "num_workers": 0,
+    "data_dir": null,
+    "train_records": null,
+    "test_records": null
+  },
+  "model": {
+    "n_classes": 5,
+    "widths": [32, 64, 128, 256, 256],
+    "fusion_hidden": 128,
+    "dropout": 0.3
+  },
+  "optim": {
+    "name": "adamw",
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "momentum": 0.9,
+    "scheduler": "cosine",
+    "step_size": 10,
+    "gamma": 0.1,
+    "min_lr": 1e-05
+  },
+  "train": {
+    "epochs": 30,
+    "device": "auto",
+    "seed": 0,
+    "class_weighted_loss": false,
+    "label_smoothing": 0.0,
+    "grad_clip": 5.0,
+    "out_dir": "runs/echofusenet_default",
+    "checkpoint_metric": "macro_f1",
+    "log_interval": 100,
+    "tensorboard": false
+  }
+}

@@ -28,9 +28,13 @@ from torch import nn
 
 from .branch import CNNBranch
 
+# Fixed modality order — matches the (rp, gaf, mtf) tuple the Day-6 DataLoader
+# yields and the ``forward`` argument order.
+CANONICAL_MODALITIES: tuple[str, ...] = ("rp", "gaf", "mtf")
+
 
 class EchoFuseNet(nn.Module):
-    """Three-branch late-fusion ECG-beat classifier.
+    """Late-fusion ECG-beat classifier over one or more signal-to-image modalities.
 
     Parameters
     ----------
@@ -42,6 +46,14 @@ class EchoFuseNet(nn.Module):
         Hidden width of the fusion MLP.
     dropout:
         Dropout probability in the fusion head.
+    modalities:
+        Which modalities to fuse — any non-empty subset of ``("rp", "gaf",
+        "mtf")``. Defaults to all three (the full EchoFuseNet). Single- and
+        two-modality subsets are what the Day-12 ablation study sweeps; only the
+        selected branches are built, and only their embeddings are concatenated
+        before the fusion head. ``forward`` still takes the full ``(rp, gaf,
+        mtf)`` triple (the DataLoader always yields all three) and simply ignores
+        the images whose branch is absent.
     """
 
     def __init__(
@@ -50,16 +62,30 @@ class EchoFuseNet(nn.Module):
         widths: tuple[int, ...] = (32, 64, 128, 256, 256),
         fusion_hidden: int = 128,
         dropout: float = 0.3,
+        modalities: tuple[str, ...] = CANONICAL_MODALITIES,
     ) -> None:
         super().__init__()
 
-        # One independent branch per modality (no weight sharing).
-        self.branch_rp = CNNBranch(in_channels=1, widths=widths)
-        self.branch_gaf = CNNBranch(in_channels=1, widths=widths)
-        self.branch_mtf = CNNBranch(in_channels=1, widths=widths)
+        requested = {m.lower() for m in modalities}
+        unknown = requested - set(CANONICAL_MODALITIES)
+        if unknown:
+            raise ValueError(
+                f"unknown modalities {sorted(unknown)}; "
+                f"choose from {list(CANONICAL_MODALITIES)}"
+            )
+        if not requested:
+            raise ValueError("at least one modality is required")
+        # Store in canonical order regardless of input order.
+        self.modalities = tuple(m for m in CANONICAL_MODALITIES if m in requested)
 
-        emb = self.branch_rp.embedding_dim
-        fused_dim = 3 * emb
+        # One independent branch per *selected* modality (no weight sharing);
+        # inactive branches are left as None so their input is skipped.
+        self.branch_rp = CNNBranch(in_channels=1, widths=widths) if "rp" in requested else None
+        self.branch_gaf = CNNBranch(in_channels=1, widths=widths) if "gaf" in requested else None
+        self.branch_mtf = CNNBranch(in_channels=1, widths=widths) if "mtf" in requested else None
+
+        emb = widths[-1]
+        fused_dim = len(self.modalities) * emb
 
         # Late-fusion classifier head over the concatenated embeddings.
         self.fusion = nn.Sequential(
@@ -76,9 +102,14 @@ class EchoFuseNet(nn.Module):
         """Return class logits ``(B, n_classes)`` for a batch of the three images.
 
         Each input is ``(B, 1, L, L)`` (as yielded by the Day-6 DataLoader).
+        Images whose branch was not built (ablation subsets) are ignored.
         """
-        e_rp = self.branch_rp(rp)
-        e_gaf = self.branch_gaf(gaf)
-        e_mtf = self.branch_mtf(mtf)
-        fused = torch.cat([e_rp, e_gaf, e_mtf], dim=1)
+        embeddings: list[torch.Tensor] = []
+        if self.branch_rp is not None:
+            embeddings.append(self.branch_rp(rp))
+        if self.branch_gaf is not None:
+            embeddings.append(self.branch_gaf(gaf))
+        if self.branch_mtf is not None:
+            embeddings.append(self.branch_mtf(mtf))
+        fused = torch.cat(embeddings, dim=1)
         return self.fusion(fused)
