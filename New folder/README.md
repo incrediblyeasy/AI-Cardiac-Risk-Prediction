@@ -22,13 +22,13 @@ Scope: this covers the core technical build of Paper 1 (EchoFuseNet) — environ
 | 6 | Data Pipeline Integration | ✅ | 2026-07-02 |
 | 7 | Branch 1 CNN (Depthwise Separable Convs) | ✅ | 2026-07-02 |
 | 8 | Branch 2 & 3 + Late Fusion | ✅ | 2026-07-02 |
-| 9 | Training Loop & Config System | ⬜ | |
-| 10 | First Full Training Run (DS1/DS2) | ⬜ | |
-| 11 | k-Fold CV + Statistical Significance | ⬜ | |
-| 12 | Ablation Study | ⬜ | |
-| 13 | Latency & Size Benchmark | ⬜ | |
-| 14 | External Validation — INCART | ⬜ | |
-| 15 | Domain-Transfer — PTB-XL + Consolidation | ⬜ | |
+| 9 | Training Loop & Config System | ✅ | 2026-07-03 |
+| 10 | First Full Training Run (DS1/DS2) | ✅ | 2026-07-03 — DS2 acc 0.9293 (in band), macro-F1 0.379 |
+| 11 | k-Fold CV + Statistical Significance | 🟡 | framework ✅ tested + DS2 CIs; full CV deferred (GPU) |
+| 12 | Ablation Study | 🟡 | framework ✅ tested; 7-config sweep deferred (GPU) |
+| 13 | Latency & Size Benchmark | ✅ | 2026-07-03 — both PASS (10.4 ms / 2.596 MB) |
+| 14 | External Validation — INCART | 🟡 | pipeline ✅ tested; run deferred (download+model) |
+| 15 | Domain-Transfer — PTB-XL + Consolidation | 🟡 | consolidation ✅; PTB-XL probe ✅; run deferred |
 
 Status legend: ⬜ Not started · 🟡 In progress · ✅ Done
 
