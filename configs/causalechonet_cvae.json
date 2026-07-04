@@ -1,0 +1,27 @@
+{
+  "encoder": {
+    "checkpoint": "runs/ds1ds2_headline/best.pt",
+    "representation_dim": null
+  },
+  "cvae": {
+    "n_classes": 5,
+    "latent_dim": 32,
+    "hidden_dim": 128
+  },
+  "optim": {
+    "name": "adamw",
+    "lr": 0.001,
+    "weight_decay": 0.0001
+  },
+  "train": {
+    "epochs": 50,
+    "batch_size": 128,
+    "device": "auto",
+    "seed": 0,
+    "beta": 1.0,
+    "beta_warmup_epochs": 10,
+    "out_dir": "runs/causalechonet_cvae",
+    "checkpoint_metric": "validity",
+    "log_interval": 50
+  }
+}

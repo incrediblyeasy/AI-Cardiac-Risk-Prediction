@@ -20,7 +20,7 @@ dependencies = [
 dev = ["pytest>=8.0", "matplotlib>=3.7"]
 
 [tool.setuptools.packages.find]
-include = ["paper1_echofusenet*", "shared*"]
+include = ["paper1_echofusenet*", "paper2_causalechonet*", "paper3_cardiocausal*", "shared*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
