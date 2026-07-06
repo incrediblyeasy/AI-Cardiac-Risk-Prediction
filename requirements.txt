@@ -17,5 +17,9 @@ pyts>=0.13
 # Visualization (sample transform figures under docs/figures/)
 matplotlib>=3.7
 
+# Hyperparameter optimization (§3) — optional; only needed for tuning runs.
+# Install with: pip install optuna>=3.4  (or: pip install -e '.[tuning]')
+# optuna>=3.4
+
 # Testing
 pytest>=8.0

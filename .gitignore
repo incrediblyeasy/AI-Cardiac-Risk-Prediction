@@ -21,3 +21,6 @@ runs/
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Repo snapshot archives — redundant with git history
+*.zip

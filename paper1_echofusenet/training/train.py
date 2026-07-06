@@ -39,6 +39,7 @@ from ..data.aami import AAMI_CLASSES
 from ..data.dataset import build_dataloaders
 from ..models import EchoFuseNet, count_parameters
 from .config import TrainConfig
+from .losses import build_loss_fn, class_counts_from_loader
 from .metrics import ClassificationReport, classification_report, format_report
 
 
@@ -127,12 +128,92 @@ def compute_class_weights(
 def build_loss(
     cfg: TrainConfig, train_loader: DataLoader, device: torch.device
 ) -> nn.Module:
-    weight = None
-    if cfg.train.class_weighted_loss:
-        weight = compute_class_weights(train_loader, cfg.model.n_classes, device)
-    return nn.CrossEntropyLoss(
-        weight=weight, label_smoothing=cfg.train.label_smoothing
+    """Build the training loss from ``cfg.loss`` (§2 imbalance recipes).
+
+    Recipe selection lives in ``cfg.loss.name`` (ce | weighted_ce | focal |
+    class_balanced). For backward compatibility, legacy configs that only set
+    ``train.class_weighted_loss = true`` (leaving ``loss.name = "ce"``) are
+    promoted to ``weighted_ce`` so old runs reproduce exactly.
+    """
+    name = cfg.loss.name.lower()
+    if name == "ce" and cfg.train.class_weighted_loss:
+        name = "weighted_ce"
+
+    if name == "ce":
+        return nn.CrossEntropyLoss(
+            label_smoothing=cfg.train.label_smoothing
+        ).to(device)
+
+    # Every other recipe needs train-fold class counts (never the test fold).
+    counts = class_counts_from_loader(train_loader, cfg.model.n_classes)
+    return build_loss_fn(
+        name,
+        cfg.model.n_classes,
+        counts,
+        gamma=cfg.loss.gamma,
+        beta=cfg.loss.beta,
+        cb_base=cfg.loss.cb_base,
+        label_smoothing=cfg.train.label_smoothing,
+        device=device,
     )
+
+
+# --------------------------------------------------------------------------- #
+# §7 training-engineering helpers
+# --------------------------------------------------------------------------- #
+class ModelEma:
+    """Exponential moving average of model parameters (a shadow copy).
+
+    Each optimiser step nudges the shadow weights toward the live weights by
+    ``(1 - decay)``. The averaged weights are usually smoother and generalise a
+    touch better at *zero* inference cost (the shadow replaces the live weights
+    at deployment). ``store``/``restore`` let evaluation temporarily swap the EMA
+    weights into the live model and put the training weights back afterwards.
+    """
+
+    def __init__(self, model: nn.Module, decay: float = 0.999) -> None:
+        self.decay = decay
+        self.shadow = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        self._backup: dict[str, torch.Tensor] = {}
+
+    @torch.no_grad()
+    def update(self, model: nn.Module) -> None:
+        for k, v in model.state_dict().items():
+            s = self.shadow[k]
+            if v.dtype.is_floating_point:
+                s.mul_(self.decay).add_(v.detach(), alpha=1.0 - self.decay)
+            else:  # int buffers (e.g. BN num_batches_tracked): just track latest
+                s.copy_(v.detach())
+
+    def store(self, model: nn.Module) -> None:
+        self._backup = {k: v.detach().clone() for k, v in model.state_dict().items()}
+
+    def copy_to(self, model: nn.Module) -> None:
+        model.load_state_dict(self.shadow, strict=True)
+
+    def restore(self, model: nn.Module) -> None:
+        if self._backup:
+            model.load_state_dict(self._backup, strict=True)
+            self._backup = {}
+
+
+def average_state_dicts(states: list[dict]) -> dict:
+    """Elementwise mean of a list of ``state_dict``s (checkpoint averaging).
+
+    Floating-point tensors are averaged; non-float buffers take the last value
+    (averaging integer counters like BN's ``num_batches_tracked`` is meaningless).
+    """
+    if not states:
+        raise ValueError("need at least one state_dict to average")
+    avg: dict = {}
+    for key in states[0]:
+        tensors = [s[key] for s in states]
+        if tensors[0].dtype.is_floating_point:
+            stacked = torch.stack([t.float() for t in tensors], dim=0)
+            avg[key] = stacked.mean(dim=0).to(tensors[0].dtype)
+        else:
+            avg[key] = tensors[-1].clone()
+    return avg
 
 
 # --------------------------------------------------------------------------- #
@@ -147,9 +228,16 @@ def train_one_epoch(
     grad_clip: float | None = None,
     log_interval: int = 0,
     epoch: int = 0,
+    scaler: "torch.cuda.amp.GradScaler | None" = None,
+    ema: ModelEma | None = None,
 ) -> float:
-    """Run one training epoch; return the mean per-sample loss."""
+    """Run one training epoch; return the mean per-sample loss.
+
+    ``scaler`` enables mixed-precision (AMP) training when supplied (GPU only);
+    ``ema`` maintains an exponential-moving-average shadow of the weights.
+    """
     model.train()
+    use_amp = scaler is not None
     running = 0.0
     n = 0
     for step, (rp, gaf, mtf, labels) in enumerate(loader):
@@ -157,12 +245,26 @@ def train_one_epoch(
         labels = labels.to(device)
 
         optimizer.zero_grad()
-        logits = model(rp, gaf, mtf)
-        loss = criterion(logits, labels)
-        loss.backward()
-        if grad_clip is not None:
-            nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-        optimizer.step()
+        if use_amp:
+            with torch.autocast(device_type=device.type, dtype=torch.float16):
+                logits = model(rp, gaf, mtf)
+                loss = criterion(logits, labels)
+            scaler.scale(loss).backward()
+            if grad_clip is not None:
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            logits = model(rp, gaf, mtf)
+            loss = criterion(logits, labels)
+            loss.backward()
+            if grad_clip is not None:
+                nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            optimizer.step()
+
+        if ema is not None:
+            ema.update(model)
 
         bs = labels.size(0)
         running += loss.item() * bs
@@ -255,6 +357,13 @@ def train(
     scheduler = build_scheduler(optimizer, cfg)
     criterion = build_loss(cfg, train_loader, device)
 
+    # AMP is GPU-only; silently disable on CPU (the edge-deployment target).
+    use_amp = cfg.train.amp and device.type == "cuda"
+    if cfg.train.amp and not use_amp:
+        print("  [AMP requested but device is not CUDA — running full precision]")
+    scaler = torch.cuda.amp.GradScaler() if use_amp else None
+    ema = ModelEma(model, decay=cfg.train.ema_decay) if cfg.train.ema else None
+
     out_dir = Path(cfg.train.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg.to_file(out_dir / "config.json")  # reproducibility snapshot
@@ -265,6 +374,9 @@ def train(
     metric_key = cfg.train.checkpoint_metric
     best_metric = -float("inf")
     best_summary: dict = {}
+    epochs_since_improve = 0
+    # Ring buffer of recent weight snapshots for checkpoint averaging.
+    recent_states: list[dict] = []
 
     for epoch in range(1, cfg.train.epochs + 1):
         train_loss = train_one_epoch(
@@ -276,11 +388,20 @@ def train(
             grad_clip=cfg.train.grad_clip,
             log_interval=cfg.train.log_interval,
             epoch=epoch,
+            scaler=scaler,
+            ema=ema,
         )
         if scheduler is not None:
             scheduler.step()
 
+        # Evaluate on the EMA weights when enabled (they are what would ship),
+        # temporarily swapping them into the model and restoring afterwards.
+        if ema is not None:
+            ema.store(model)
+            ema.copy_to(model)
         report = evaluate(model, test_loader, device, cfg.model.n_classes)
+        if ema is not None:
+            ema.restore(model)
         scalars = report.scalar_metrics()
         lr = optimizer.param_groups[0]["lr"]
 
@@ -297,7 +418,7 @@ def train(
         print(
             f"epoch {epoch:3d}/{cfg.train.epochs} | loss {train_loss:.4f} | "
             f"acc {scalars['accuracy']:.4f} | macro-F1 {scalars['macro_f1']:.4f} "
-            f"| lr {lr:.2e}"
+            f"| MCC {scalars['mcc']:.4f} | lr {lr:.2e}"
         )
         print(format_report(report, AAMI_CLASSES[: cfg.model.n_classes]))
 
@@ -307,6 +428,15 @@ def train(
             for k, v in scalars.items():
                 writer.add_scalar(f"val/{k}", v, epoch)
 
+        # Snapshot weights for checkpoint averaging (EMA weights if enabled).
+        if cfg.train.checkpoint_avg_last > 0:
+            if ema is not None:
+                snap = {k: v.detach().clone() for k, v in ema.shadow.items()}
+            else:
+                snap = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            recent_states.append(snap)
+            recent_states = recent_states[-cfg.train.checkpoint_avg_last :]
+
         save_checkpoint(
             out_dir / "last.pt", model, optimizer, epoch, scalars.get(metric_key, 0.0), cfg
         )
@@ -315,13 +445,44 @@ def train(
             raise KeyError(
                 f"checkpoint_metric '{metric_key}' not in metrics {list(scalars)}"
             )
-        if current > best_metric:
+        if current > best_metric + cfg.train.early_stopping_min_delta:
             best_metric = current
             best_summary = {"epoch": epoch, **scalars}
+            epochs_since_improve = 0
             save_checkpoint(
                 out_dir / "best.pt", model, optimizer, epoch, current, cfg
             )
             print(f"  -> new best {metric_key} = {current:.4f} (saved best.pt)")
+        else:
+            epochs_since_improve += 1
+
+        # Early stopping: bail once the metric has plateaued for `patience` epochs.
+        if (
+            cfg.train.early_stopping_patience > 0
+            and epochs_since_improve >= cfg.train.early_stopping_patience
+        ):
+            print(
+                f"  early stopping at epoch {epoch}: no {metric_key} improvement "
+                f"for {epochs_since_improve} epochs"
+            )
+            break
+
+    # Checkpoint averaging: mean of the last N snapshots, evaluated + saved.
+    if cfg.train.checkpoint_avg_last > 0 and recent_states:
+        avg_state = average_state_dicts(recent_states)
+        avg_model = build_model(cfg).to(device)
+        avg_model.load_state_dict(avg_state)
+        avg_report = evaluate(avg_model, test_loader, device, cfg.model.n_classes)
+        torch.save(
+            {"model_state": avg_state, "config": cfg.to_dict(),
+             "n_averaged": len(recent_states)},
+            out_dir / "averaged.pt",
+        )
+        best_summary["averaged"] = avg_report.scalar_metrics()
+        print(
+            f"  checkpoint-averaged {len(recent_states)} snapshots -> "
+            f"macro-F1 {avg_report.macro_f1:.4f} (saved averaged.pt)"
+        )
 
     if writer is not None:
         writer.close()
@@ -337,6 +498,7 @@ def run_from_config(cfg: TrainConfig) -> dict:
     data_kwargs = dict(
         batch_size=cfg.data.batch_size,
         oversample=cfg.data.oversample,
+        use_balanced_sampler=cfg.data.use_balanced_sampler,
         normalize=cfg.data.normalize,
         seed=cfg.train.seed,
         num_workers=cfg.data.num_workers,
@@ -351,7 +513,24 @@ def run_from_config(cfg: TrainConfig) -> dict:
     print(
         f"Model: EchoFuseNet | params {count_parameters(model):,} | device {device}"
     )
-    return train(model, train_loader, test_loader, cfg, device=device)
+    summary = train(model, train_loader, test_loader, cfg, device=device)
+
+    # §8: capture the full reproducibility record (git hash, seed, config,
+    # final metrics) once, next to the checkpoints and in the shared ledger.
+    try:
+        from shared.utils import log_experiment
+
+        log_experiment(
+            name=Path(cfg.train.out_dir).name,
+            seed=cfg.train.seed,
+            config=cfg.to_dict(),
+            metrics=summary,
+            out_dir=cfg.train.out_dir,
+            extra={"n_params": count_parameters(model)},
+        )
+    except Exception as exc:  # logging must never break a completed run
+        print(f"  [experiment log skipped: {exc}]")
+    return summary
 
 
 def main() -> None:

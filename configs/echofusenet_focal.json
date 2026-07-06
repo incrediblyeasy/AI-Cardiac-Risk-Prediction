@@ -1,0 +1,52 @@
+{
+  "data": {
+    "batch_size": 64,
+    "oversample": false,
+    "use_balanced_sampler": false,
+    "normalize": true,
+    "num_workers": 0,
+    "data_dir": null,
+    "train_records": null,
+    "test_records": null
+  },
+  "model": {
+    "n_classes": 5,
+    "widths": [32, 64, 128, 256, 256],
+    "fusion_hidden": 128,
+    "dropout": 0.3
+  },
+  "optim": {
+    "name": "adamw",
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "momentum": 0.9,
+    "scheduler": "cosine",
+    "step_size": 10,
+    "gamma": 0.1,
+    "min_lr": 1e-05
+  },
+  "loss": {
+    "name": "focal",
+    "gamma": 2.0,
+    "beta": 0.999,
+    "cb_base": "focal"
+  },
+  "train": {
+    "epochs": 30,
+    "device": "auto",
+    "seed": 0,
+    "class_weighted_loss": false,
+    "label_smoothing": 0.0,
+    "grad_clip": 5.0,
+    "amp": true,
+    "early_stopping_patience": 8,
+    "early_stopping_min_delta": 0.0,
+    "ema": true,
+    "ema_decay": 0.999,
+    "checkpoint_avg_last": 5,
+    "out_dir": "runs/echofusenet_focal",
+    "checkpoint_metric": "macro_f1",
+    "log_interval": 200,
+    "tensorboard": false
+  }
+}

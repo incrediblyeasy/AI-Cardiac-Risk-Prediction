@@ -34,6 +34,11 @@ class DataConfig:
 
     batch_size: int = 32
     oversample: bool = True          # train fold only, applied post-split
+    # Per-epoch class-balanced WeightedRandomSampler (data/sampler.py) as an
+    # alternative to materialised oversampling. When True it supersedes
+    # ``oversample`` on the train loader (they are mutually exclusive — the
+    # sampler already rebalances, so double-balancing is avoided).
+    use_balanced_sampler: bool = False
     normalize: bool = True           # put RP/GAF/MTF on a common [0, 1] scale
     num_workers: int = 0
     data_dir: str | None = None      # None -> library default (data/raw/mitdb)
@@ -69,6 +74,28 @@ class OptimConfig:
 
 
 @dataclass
+class LossConfig:
+    """Class-imbalance loss recipe (see ``training/losses.py``).
+
+    ``name`` selects one of the four recipes the §2 enhancement compares:
+    ``ce`` (plain cross-entropy), ``weighted_ce`` (inverse-frequency weights),
+    ``focal`` (Lin et al.), or ``class_balanced`` (Cui et al., effective-number
+    weighting). ``gamma`` is the focal focusing parameter; ``beta`` the
+    class-balanced effective-number hyperparameter; ``cb_base`` whether the
+    class-balanced loss wraps ``ce`` or ``focal``.
+
+    Backward-compatible default: ``ce``. For legacy configs that only set
+    ``train.class_weighted_loss = true`` (and leave ``name = "ce"``), the trainer
+    promotes the recipe to ``weighted_ce`` so old runs reproduce.
+    """
+
+    name: str = "ce"                 # ce | weighted_ce | focal | class_balanced
+    gamma: float = 2.0               # focal focusing parameter
+    beta: float = 0.999              # class-balanced effective-number beta
+    cb_base: str = "focal"           # class_balanced base loss: ce | focal
+
+
+@dataclass
 class TrainLoopConfig:
     """Training-loop control, loss shaping, checkpointing, logging."""
 
@@ -80,6 +107,23 @@ class TrainLoopConfig:
     class_weighted_loss: bool = False
     label_smoothing: float = 0.0
     grad_clip: float | None = None   # max grad norm, or None to disable
+    # --- §7 training engineering ------------------------------------------
+    # Mixed precision (AMP): speeds up GPU training; a no-op on CPU (the edge
+    # deployment target), where it is silently disabled.
+    amp: bool = False
+    # Early stopping: halt if ``checkpoint_metric`` has not improved for
+    # ``early_stopping_patience`` epochs (0 disables). ``min_delta`` is the
+    # smallest change counted as an improvement.
+    early_stopping_patience: int = 0
+    early_stopping_min_delta: float = 0.0
+    # Exponential moving average of weights: a shadow copy updated each step;
+    # evaluated/checkpointed alongside the raw model when enabled. Often a small
+    # free accuracy/calibration gain at zero inference cost.
+    ema: bool = False
+    ema_decay: float = 0.999
+    # Checkpoint averaging: average the last ``checkpoint_avg_last`` epoch
+    # weight snapshots into ``averaged.pt`` at the end of training (0 disables).
+    checkpoint_avg_last: int = 0
     # Checkpointing / logging.
     out_dir: str = "runs/echofusenet"
     checkpoint_metric: str = "macro_f1"  # best-model selection metric
@@ -94,6 +138,7 @@ class TrainConfig:
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     optim: OptimConfig = field(default_factory=OptimConfig)
+    loss: LossConfig = field(default_factory=LossConfig)
     train: TrainLoopConfig = field(default_factory=TrainLoopConfig)
 
     # --- (de)serialisation ------------------------------------------------
@@ -137,6 +182,7 @@ _SUBCONFIGS: dict[str, type] = {
     "data": DataConfig,
     "model": ModelConfig,
     "optim": OptimConfig,
+    "loss": LossConfig,
     "train": TrainLoopConfig,
 }
 

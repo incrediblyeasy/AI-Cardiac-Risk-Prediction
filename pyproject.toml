@@ -18,6 +18,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "matplotlib>=3.7"]
+# §3 hyperparameter optimisation — optional so core training stays lightweight.
+tuning = ["optuna>=3.4"]
+# §6 standard-CNN baselines for the comparison table — optional.
+baselines = ["torchvision>=0.17"]
 
 [tool.setuptools.packages.find]
 include = ["paper1_echofusenet*", "paper2_causalechonet*", "paper3_cardiocausal*", "shared*"]

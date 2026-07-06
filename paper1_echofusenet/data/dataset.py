@@ -131,30 +131,44 @@ def build_dataloaders(
     data_dir: Path = DEFAULT_DEST,
     train_records: tuple[int, ...] | None = None,
     test_records: tuple[int, ...] | None = None,
+    use_balanced_sampler: bool = False,
     **extract_kwargs,
 ) -> tuple[DataLoader, DataLoader]:
     """Build (train, test) multimodal DataLoaders under the inter-patient split.
 
-    Oversampling (when enabled) is applied to the **train** fold only and only
-    after ``build_split`` has produced patient-disjoint folds; the test fold is
-    returned with its natural distribution. Returns ``(train_loader,
-    test_loader)``.
+    Class balancing of the **train** fold (only, and only after ``build_split``
+    has produced patient-disjoint folds) can be done two ways:
+
+    * ``oversample=True`` — materialise duplicated minority beats up front.
+    * ``use_balanced_sampler=True`` — attach a per-epoch class-balanced
+      ``WeightedRandomSampler`` and leave the beat list untouched.
+
+    The sampler takes precedence when both are set (they are mutually exclusive —
+    the sampler already rebalances). The test fold is always returned with its
+    natural DS2 distribution. Returns ``(train_loader, test_loader)``.
     """
     train_beats, test_beats = build_split(
         data_dir, train_records, test_records, **extract_kwargs
     )
-    if oversample:
+    if oversample and not use_balanced_sampler:
         train_beats = oversample_beats(train_beats, seed=seed)
 
     train_ds = MultimodalBeatDataset(train_beats, normalize=normalize)
     test_ds = MultimodalBeatDataset(test_beats, normalize=normalize)
 
-    # Deterministic shuffling of the train fold given the seed.
+    # Train ordering: a class-balanced sampler (mutually exclusive with shuffle),
+    # otherwise deterministic seeded shuffling.
     generator = torch.Generator().manual_seed(seed)
+    sampler = None
+    if use_balanced_sampler:
+        from .sampler import make_balanced_sampler
+
+        sampler = make_balanced_sampler(train_ds, seed=seed)
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=sampler is None,
+        sampler=sampler,
         num_workers=num_workers,
         generator=generator,
         drop_last=False,
