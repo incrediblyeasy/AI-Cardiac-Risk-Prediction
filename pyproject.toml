@@ -22,6 +22,9 @@ dev = ["pytest>=8.0", "matplotlib>=3.7"]
 tuning = ["optuna>=3.4"]
 # §6 standard-CNN baselines for the comparison table — optional.
 baselines = ["torchvision>=0.17"]
+# §8 ONNX export + int8 quantization for the deployment section — optional.
+# onnxscript backs torch>=2.5's default ONNX exporter.
+deployment = ["onnx>=1.16", "onnxruntime>=1.17", "onnxscript>=0.1"]
 
 [tool.setuptools.packages.find]
 include = ["paper1_echofusenet*", "paper2_causalechonet*", "shared*"]

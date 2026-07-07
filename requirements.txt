@@ -21,5 +21,11 @@ matplotlib>=3.7
 # Install with: pip install optuna>=3.4  (or: pip install -e '.[tuning]')
 # optuna>=3.4
 
+# ONNX deployment (§8) — optional; only needed for export/quantization runs.
+# Install with: pip install onnx onnxruntime  (or: pip install -e '.[deployment]')
+# onnx>=1.16
+# onnxruntime>=1.17
+# onnxscript>=0.1
+
 # Testing
 pytest>=8.0
