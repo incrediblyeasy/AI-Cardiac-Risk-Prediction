@@ -24,7 +24,7 @@ tuning = ["optuna>=3.4"]
 baselines = ["torchvision>=0.17"]
 
 [tool.setuptools.packages.find]
-include = ["paper1_echofusenet*", "paper2_causalechonet*", "paper3_cardiocausal*", "shared*"]
+include = ["paper1_echofusenet*", "paper2_causalechonet*", "shared*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -6,6 +6,12 @@ code (not just reading it) on 2026-07-03. Compared against
 
 ## 0. Bottom line
 
+> **SCOPE CHANGE (this update):** Paper 3 (CardioCausal), §4 below, has been
+> **removed from this repo**. This is now a 2-paper scope: Paper 1
+> (EchoFuseNet) + Paper 2 (CausalEchoNet). §4 is left in place below as
+> historical planning context only — nothing in `paper3_cardiocausal/`
+> exists in the repo anymore.
+
 **Paper 1 (EchoFuseNet) is real and correct as far as it goes — roughly
 70-80% done.** Core framework is fully built and unit-tested; what's left is
 GPU-scale runs, two external dataset downloads, and manuscript writing.
@@ -37,7 +43,7 @@ That discipline should carry forward into Papers 2 and 3.
 > export, credentialed/downloaded data (MIMIC-IV, external cohorts), human clinical
 > review, and manuscript prose — every runtime-gated entry point raises with its
 > exact prerequisite, and **no results are fabricated**. Details:
-> `docs/PAPER2_PAPER3_SCAFFOLD.md`. Still 0% *delivered science* — this is the
+> `docs/PAPER2_SCAFFOLD.md`. Still 0% *delivered science* — this is the
 > framework the gated runs will use, not the runs themselves.
 
 ---
