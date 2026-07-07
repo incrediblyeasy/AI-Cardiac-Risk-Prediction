@@ -35,6 +35,7 @@ from ..transforms import (
 )
 from .beats import BeatSegment, build_split
 from .download import DEFAULT_DEST
+from .transform_cache import DiskTransformCache
 
 CHANNEL_NAMES: tuple[str, ...] = ("RP", "GAF", "MTF")
 
@@ -63,11 +64,23 @@ class MultimodalBeatDataset(Dataset):
     image per CNN branch); ``label`` is a scalar ``long`` tensor in ``0..4``.
     Images are computed lazily in ``__getitem__`` so memory stays flat regardless
     of fold size (important after oversampling).
+
+    ``transform_cache``, if given, is checked before recomputing a beat's
+    RP/GAF/MTF and populated on a miss — see ``transform_cache.py`` for why
+    this is disk-backed and size-capped rather than an in-memory dict.
+    Passing the *same* cache across CV folds / ablation configs is what
+    actually avoids redundant recomputation of overlapping DS1 beats.
     """
 
-    def __init__(self, beats: list[BeatSegment], normalize: bool = True) -> None:
+    def __init__(
+        self,
+        beats: list[BeatSegment],
+        normalize: bool = True,
+        transform_cache: "DiskTransformCache | None" = None,
+    ) -> None:
         self.beats = beats
         self.normalize = normalize
+        self.transform_cache = transform_cache
 
     def __len__(self) -> int:
         return len(self.beats)
@@ -76,7 +89,21 @@ class MultimodalBeatDataset(Dataset):
         self, index: int
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         beat = self.beats[index]
-        rp, gaf, mtf = beat_to_channels(beat.signal, normalize=self.normalize)
+
+        cached = None
+        if self.transform_cache is not None:
+            cached = self.transform_cache.get(beat.record_id, beat.r_peak)
+
+        if cached is not None:
+            rp, gaf, mtf = cached  # always stored raw (pre-normalize) — see put() call below
+        else:
+            rp, gaf, mtf = beat_to_channels(beat.signal, normalize=False)
+            if self.transform_cache is not None:
+                self.transform_cache.put(beat.record_id, beat.r_peak, rp, gaf, mtf)
+
+        if self.normalize:
+            gaf = (gaf + 1.0) / 2.0  # applied uniformly regardless of cache hit/miss
+
         to_tensor = lambda a: torch.from_numpy(np.ascontiguousarray(a)).unsqueeze(0)
         return (
             to_tensor(rp),
@@ -132,6 +159,7 @@ def build_dataloaders(
     train_records: tuple[int, ...] | None = None,
     test_records: tuple[int, ...] | None = None,
     use_balanced_sampler: bool = False,
+    transform_cache: "DiskTransformCache | None" = None,
     **extract_kwargs,
 ) -> tuple[DataLoader, DataLoader]:
     """Build (train, test) multimodal DataLoaders under the inter-patient split.
@@ -146,6 +174,12 @@ def build_dataloaders(
     The sampler takes precedence when both are set (they are mutually exclusive —
     the sampler already rebalances). The test fold is always returned with its
     natural DS2 distribution. Returns ``(train_loader, test_loader)``.
+
+    ``transform_cache``: pass the *same* :class:`DiskTransformCache` instance
+    across multiple calls (e.g. across CV folds, or across ablation configs)
+    to avoid recomputing RP/GAF/MTF for beats shared across those calls —
+    this is the actual point of the cache. A fresh cache per call gives no
+    benefit beyond the calls sharing a beat's *within-call* epoch repeats.
     """
     train_beats, test_beats = build_split(
         data_dir, train_records, test_records, **extract_kwargs
@@ -153,8 +187,8 @@ def build_dataloaders(
     if oversample and not use_balanced_sampler:
         train_beats = oversample_beats(train_beats, seed=seed)
 
-    train_ds = MultimodalBeatDataset(train_beats, normalize=normalize)
-    test_ds = MultimodalBeatDataset(test_beats, normalize=normalize)
+    train_ds = MultimodalBeatDataset(train_beats, normalize=normalize, transform_cache=transform_cache)
+    test_ds = MultimodalBeatDataset(test_beats, normalize=normalize, transform_cache=transform_cache)
 
     # Train ordering: a class-balanced sampler (mutually exclusive with shuffle),
     # otherwise deterministic seeded shuffling.

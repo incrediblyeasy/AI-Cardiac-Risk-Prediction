@@ -163,6 +163,17 @@ def cross_validate(
     n_classes = cfg.model.n_classes
     out_root = Path(cfg.train.out_dir)
 
+    # Shared across all folds: the same beats (mostly) recur across folds
+    # (each fold holds out a different patient subset from the same DS1
+    # pool), so one cache instance here avoids recomputing RP/GAF/MTF for
+    # patients that appear in multiple folds' training sets. Budget is
+    # conservative by default -- see transform_cache.py for why a full
+    # DS1 cache (~18.7 GB) isn't safely promised without knowing your disk.
+    from ..data.transform_cache import DiskTransformCache
+    transform_cache = DiskTransformCache(
+        out_root / "transform_cache", max_bytes=getattr(cfg.data, "transform_cache_max_gb", 4) * 1024**3
+    )
+
     per_fold: list[FoldResult] = []
     for i, (train_p, val_p) in enumerate(splits):
         assert_patient_disjoint(train_p, val_p)  # inter-patient guard, per fold
@@ -175,14 +186,14 @@ def cross_validate(
 
         gen = torch.Generator().manual_seed(seed)
         train_loader = DataLoader(
-            MultimodalBeatDataset(train_beats, cfg.data.normalize),
+            MultimodalBeatDataset(train_beats, cfg.data.normalize, transform_cache=transform_cache),
             batch_size=cfg.data.batch_size,
             shuffle=True,
             num_workers=cfg.data.num_workers,
             generator=gen,
         )
         val_loader = DataLoader(
-            MultimodalBeatDataset(val_beats, cfg.data.normalize),
+            MultimodalBeatDataset(val_beats, cfg.data.normalize, transform_cache=transform_cache),
             batch_size=cfg.data.batch_size,
             shuffle=False,
             num_workers=cfg.data.num_workers,

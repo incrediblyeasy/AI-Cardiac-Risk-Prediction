@@ -208,6 +208,16 @@ def run_ablation_from_config(cfg: TrainConfig) -> AblationReport:
     device = resolve_device(cfg.train.device)
 
     from ..data.dataset import build_dataloaders
+    from ..data.transform_cache import DiskTransformCache
+
+    # Ablation already reuses one set of loaders across all 7 modality
+    # configs (see run_ablation's docstring) -- so this cache's benefit here
+    # is epoch-to-epoch reuse within a run, plus surviving a re-run of this
+    # script, not "fewer configs recompute" (that redundancy didn't exist).
+    transform_cache = DiskTransformCache(
+        Path(cfg.train.out_dir) / "transform_cache",
+        max_bytes=getattr(cfg.data, "transform_cache_max_gb", 4) * 1024**3,
+    )
 
     data_kwargs = dict(
         batch_size=cfg.data.batch_size,
@@ -217,6 +227,7 @@ def run_ablation_from_config(cfg: TrainConfig) -> AblationReport:
         num_workers=cfg.data.num_workers,
         train_records=tuple(cfg.data.train_records) if cfg.data.train_records else None,
         test_records=tuple(cfg.data.test_records) if cfg.data.test_records else None,
+        transform_cache=transform_cache,
     )
     if cfg.data.data_dir:
         data_kwargs["data_dir"] = Path(cfg.data.data_dir)

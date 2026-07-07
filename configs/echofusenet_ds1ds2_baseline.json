@@ -3,7 +3,7 @@
     "batch_size": 64,
     "oversample": false,
     "normalize": true,
-    "num_workers": 0,
+    "num_workers": 2,
     "data_dir": null,
     "train_records": null,
     "test_records": null
