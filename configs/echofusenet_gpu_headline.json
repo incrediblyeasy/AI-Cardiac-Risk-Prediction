@@ -35,6 +35,8 @@
     "out_dir": "runs/ds1ds2_headline",
     "checkpoint_metric": "macro_f1",
     "log_interval": 100,
-    "tensorboard": false
+    "tensorboard": false,
+    "early_stopping_patience": 5,
+    "early_stopping_min_delta": 0.001
   }
 }

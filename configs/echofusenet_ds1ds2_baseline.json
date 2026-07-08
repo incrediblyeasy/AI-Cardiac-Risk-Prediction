@@ -25,8 +25,8 @@
     "min_lr": 1e-05
   },
   "train": {
-    "epochs": 3,
-    "device": "cpu",
+    "epochs": 30,
+    "device": "auto",
     "seed": 0,
     "class_weighted_loss": false,
     "label_smoothing": 0.0,
@@ -34,6 +34,8 @@
     "out_dir": "runs/ds1ds2_baseline",
     "checkpoint_metric": "macro_f1",
     "log_interval": 200,
-    "tensorboard": false
+    "tensorboard": false,
+    "early_stopping_patience": 5,
+    "early_stopping_min_delta": 0.001
   }
 }

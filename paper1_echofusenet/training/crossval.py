@@ -138,6 +138,79 @@ def _interval_dict(iv: Interval) -> dict:
     return {"point": iv.point, "low": iv.low, "high": iv.high, "confidence": iv.confidence}
 
 
+def _fold_result_path(out_root: Path, fold: int) -> Path:
+    return out_root / f"fold_{fold}" / "fold_result.npz"
+
+
+def _save_fold_result(out_root: Path, result: FoldResult) -> None:
+    """Persist one fold's full result to disk immediately after it completes.
+
+    This is what makes CV resumable at the fold level: without this, a
+    completed fold's *trained checkpoint* survives a crash (train() already
+    saves that), but its *evaluation* (accuracy, macro-F1, confusion matrix,
+    pooled predictions) only lived in an in-memory list before this fix --
+    lost the moment the process died, even if training itself was done.
+    """
+    path = _fold_result_path(out_root, result.fold)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    r = result.report
+    np.savez(
+        path,
+        fold=np.array(result.fold),
+        val_patients=np.array(result.val_patients),
+        accuracy=np.array(result.accuracy),
+        macro_f1=np.array(result.macro_f1),
+        y_true=result.y_true,
+        y_pred=result.y_pred,
+        confusion=r.confusion,
+        support=r.support,
+        precision=r.precision,
+        recall=r.recall,
+        f1=r.f1,
+        report_accuracy=np.array(r.accuracy),
+        report_macro_f1=np.array(r.macro_f1),
+        macro_precision=np.array(r.macro_precision),
+        macro_recall=np.array(r.macro_recall),
+        mcc=np.array(r.mcc),
+        cohen_kappa=np.array(r.cohen_kappa),
+    )
+
+
+def _load_fold_result(out_root: Path, fold: int) -> "FoldResult | None":
+    """Load a previously-completed fold's result, or None if not present /
+    unreadable (a corrupt/partial file is treated as 'not done', so it just
+    gets retrained rather than crashing the whole CV run)."""
+    path = _fold_result_path(out_root, fold)
+    if not path.exists():
+        return None
+    try:
+        with np.load(path) as d:
+            report = ClassificationReport(
+                confusion=d["confusion"],
+                support=d["support"],
+                precision=d["precision"],
+                recall=d["recall"],
+                f1=d["f1"],
+                accuracy=float(d["report_accuracy"]),
+                macro_f1=float(d["report_macro_f1"]),
+                macro_precision=float(d["macro_precision"]),
+                macro_recall=float(d["macro_recall"]),
+                mcc=float(d["mcc"]),
+                cohen_kappa=float(d["cohen_kappa"]),
+            )
+            return FoldResult(
+                fold=int(d["fold"]),
+                val_patients=tuple(int(p) for p in d["val_patients"]),
+                accuracy=float(d["accuracy"]),
+                macro_f1=float(d["macro_f1"]),
+                report=report,
+                y_true=d["y_true"],
+                y_pred=d["y_pred"],
+            )
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 def cross_validate(
     cfg: TrainConfig,
     k: int = 5,
@@ -147,12 +220,21 @@ def cross_validate(
     device: torch.device | None = None,
     beats: list[BeatSegment] | None = None,
     n_boot: int = 2000,
+    resume: bool = True,
 ) -> CrossValReport:
     """Run patient-grouped k-fold CV over DS1 and aggregate with CIs.
 
     ``beats`` may be supplied directly (used by tests) to bypass loading DS1 from
     disk. Otherwise DS1 is loaded via ``load_fold``. The DS2 test fold is never
     referenced here.
+
+    ``resume``: if a fold's result was already saved by a previous run of this
+    same function against the same ``out_dir`` (e.g. before a Kaggle disconnect
+    or quota cutoff), that fold is loaded from disk and skipped rather than
+    retrained. Only genuinely-completed folds are ever reused -- a fold whose
+    result file is missing or unreadable is retrained from scratch, not
+    silently assumed done. Pass ``resume=False`` to force every fold to
+    retrain regardless of what's on disk.
     """
     device = device or resolve_device(cfg.train.device)
     if beats is None:
@@ -177,6 +259,14 @@ def cross_validate(
     per_fold: list[FoldResult] = []
     for i, (train_p, val_p) in enumerate(splits):
         assert_patient_disjoint(train_p, val_p)  # inter-patient guard, per fold
+
+        if resume:
+            existing = _load_fold_result(out_root, i)
+            if existing is not None:
+                print(f"\n===== fold {i} | already completed (loaded from disk, skipping retrain) =====")
+                per_fold.append(existing)
+                continue
+
         train_set = set(train_p)
         val_set = set(val_p)
         train_beats = [b for b in beats if b.record_id in train_set]
@@ -210,17 +300,17 @@ def cross_validate(
 
         report = evaluate(model, val_loader, device, n_classes)
         y_true, y_pred = _collect_predictions(model, val_loader, device)
-        per_fold.append(
-            FoldResult(
-                fold=i,
-                val_patients=val_p,
-                accuracy=report.accuracy,
-                macro_f1=report.macro_f1,
-                report=report,
-                y_true=y_true,
-                y_pred=y_pred,
-            )
+        fold_result = FoldResult(
+            fold=i,
+            val_patients=val_p,
+            accuracy=report.accuracy,
+            macro_f1=report.macro_f1,
+            report=report,
+            y_true=y_true,
+            y_pred=y_pred,
         )
+        _save_fold_result(out_root, fold_result)  # survives a crash/quota-cutoff right here
+        per_fold.append(fold_result)
 
     accs = [f.accuracy for f in per_fold]
     f1s = [f.macro_f1 for f in per_fold]
@@ -278,6 +368,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=None, help="Override config seed.")
     parser.add_argument("--epochs", type=int, default=None, help="Override epochs per fold.")
     parser.add_argument("--out-dir", default=None, help="Override config train.out_dir.")
+    parser.add_argument(
+        "--no-resume", action="store_true",
+        help="Force every fold to retrain from scratch, even if a completed "
+             "fold's result is already saved on disk (default: resume).",
+    )
     args = parser.parse_args()
 
     cfg = TrainConfig.from_file(args.config)
@@ -288,7 +383,7 @@ def main() -> None:
     if args.out_dir is not None:
         cfg.train.out_dir = args.out_dir
 
-    report = cross_validate(cfg, k=args.folds, seed=cfg.train.seed)
+    report = cross_validate(cfg, k=args.folds, seed=cfg.train.seed, resume=not args.no_resume)
     print("\n" + "=" * 52)
     print(f"{args.folds}-fold patient-grouped CV")
     print("=" * 52)

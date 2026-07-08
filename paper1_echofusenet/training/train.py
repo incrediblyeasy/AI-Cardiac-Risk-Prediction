@@ -308,18 +308,58 @@ def save_checkpoint(
     epoch: int,
     metric: float,
     cfg: TrainConfig,
+    scheduler: "torch.optim.lr_scheduler.LRScheduler | None" = None,
+    best_metric: float | None = None,
+    epochs_since_improve: int | None = None,
 ) -> None:
+    """Save a fully resumable checkpoint.
+
+    Beyond the model/optimizer weights, this persists the **scheduler state**,
+    the running **best metric**, and the **early-stopping counter** so a resumed
+    run continues the LR schedule and plateau tracking exactly where it left off
+    — a checkpoint that carried only the weights would silently reset those.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
             "epoch": epoch,
             "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
+            "scheduler_state": scheduler.state_dict() if scheduler is not None else None,
             "metric": metric,
+            "best_metric": best_metric if best_metric is not None else metric,
+            "epochs_since_improve": epochs_since_improve if epochs_since_improve is not None else 0,
             "config": cfg.to_dict(),
         },
         path,
     )
+
+
+def load_checkpoint_for_resume(
+    path: str | Path,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    scheduler: "torch.optim.lr_scheduler.LRScheduler | None" = None,
+) -> dict:
+    """Restore model/optimizer/scheduler in place; return resume bookkeeping.
+
+    Returns ``{"epoch", "best_metric", "epochs_since_improve"}`` — the state
+    ``train`` needs to continue epoch numbering and early-stopping/best-metric
+    tracking. Missing optimizer/scheduler state is tolerated (an older
+    checkpoint), so a partial checkpoint still restores what it can.
+    """
+    ckpt = torch.load(Path(path), map_location=device, weights_only=False)
+    model.load_state_dict(ckpt["model_state"])
+    if ckpt.get("optimizer_state") is not None:
+        optimizer.load_state_dict(ckpt["optimizer_state"])
+    if scheduler is not None and ckpt.get("scheduler_state") is not None:
+        scheduler.load_state_dict(ckpt["scheduler_state"])
+    return {
+        "epoch": int(ckpt.get("epoch", 0)),
+        "best_metric": float(ckpt.get("best_metric", -float("inf"))),
+        "epochs_since_improve": int(ckpt.get("epochs_since_improve", 0)),
+    }
 
 
 def _open_tensorboard(out_dir: Path, enabled: bool):
@@ -343,12 +383,20 @@ def train(
     test_loader: DataLoader,
     cfg: TrainConfig,
     device: torch.device | None = None,
+    resume_from: str | Path | None = None,
 ) -> dict:
     """Full training run. Returns the best-epoch summary dict.
 
     Takes loaders + model directly so it is unit-testable without real data.
     Writes checkpoints, ``config.json``, and ``history.jsonl`` under
     ``cfg.train.out_dir``.
+
+    ``resume_from``: path to a ``last.pt`` from an interrupted run (a Kaggle/Colab
+    disconnect or quota cutoff). When given and present, training restores the
+    model/optimizer/scheduler and the best-metric / early-stopping counters,
+    continues the epoch numbering, and **appends** to ``history.jsonl`` instead of
+    truncating it. A missing checkpoint falls back to a fresh run, so the flag is
+    safe to leave on across restarts.
     """
     device = device or resolve_device(cfg.train.device)
     model = model.to(device)
@@ -368,17 +416,42 @@ def train(
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg.to_file(out_dir / "config.json")  # reproducibility snapshot
     history_path = out_dir / "history.jsonl"
-    history_path.write_text("", encoding="utf-8")  # fresh run
     writer = _open_tensorboard(out_dir, cfg.train.tensorboard)
 
     metric_key = cfg.train.checkpoint_metric
     best_metric = -float("inf")
     best_summary: dict = {}
     epochs_since_improve = 0
+    start_epoch = 0
     # Ring buffer of recent weight snapshots for checkpoint averaging.
     recent_states: list[dict] = []
 
-    for epoch in range(1, cfg.train.epochs + 1):
+    # Resume from an interrupted run: restore state + continue epoch numbering,
+    # appending to the existing history rather than truncating it. A missing
+    # checkpoint falls back to a fresh run.
+    resume_path = Path(resume_from) if resume_from is not None else None
+    if resume_path is not None and resume_path.exists():
+        state = load_checkpoint_for_resume(
+            resume_path, model, optimizer, device, scheduler=scheduler
+        )
+        start_epoch = state["epoch"]
+        best_metric = state["best_metric"]
+        epochs_since_improve = state["epochs_since_improve"]
+        print(
+            f"  [resume] from epoch {start_epoch} (best {metric_key}="
+            f"{best_metric:.4f}, epochs_since_improve={epochs_since_improve})"
+        )
+        if start_epoch >= cfg.train.epochs:
+            print(
+                f"  [resume] checkpoint already at/beyond {cfg.train.epochs} "
+                f"epochs — nothing to train"
+            )
+    else:
+        if resume_path is not None:
+            print(f"  [resume] no checkpoint at {resume_path} — starting fresh")
+        history_path.write_text("", encoding="utf-8")  # fresh run
+
+    for epoch in range(start_epoch + 1, cfg.train.epochs + 1):
         train_loss = train_one_epoch(
             model,
             train_loader,
@@ -437,9 +510,6 @@ def train(
             recent_states.append(snap)
             recent_states = recent_states[-cfg.train.checkpoint_avg_last :]
 
-        save_checkpoint(
-            out_dir / "last.pt", model, optimizer, epoch, scalars.get(metric_key, 0.0), cfg
-        )
         current = scalars.get(metric_key)
         if current is None:
             raise KeyError(
@@ -450,11 +520,21 @@ def train(
             best_summary = {"epoch": epoch, **scalars}
             epochs_since_improve = 0
             save_checkpoint(
-                out_dir / "best.pt", model, optimizer, epoch, current, cfg
+                out_dir / "best.pt", model, optimizer, epoch, current, cfg,
+                scheduler=scheduler, best_metric=best_metric,
+                epochs_since_improve=epochs_since_improve,
             )
             print(f"  -> new best {metric_key} = {current:.4f} (saved best.pt)")
         else:
             epochs_since_improve += 1
+
+        # Save last.pt AFTER updating best-metric / early-stopping bookkeeping so
+        # a resume continues with the correct scheduler + plateau state.
+        save_checkpoint(
+            out_dir / "last.pt", model, optimizer, epoch, current, cfg,
+            scheduler=scheduler, best_metric=best_metric,
+            epochs_since_improve=epochs_since_improve,
+        )
 
         # Early stopping: bail once the metric has plateaued for `patience` epochs.
         if (
@@ -490,7 +570,7 @@ def train(
     return best_summary
 
 
-def run_from_config(cfg: TrainConfig) -> dict:
+def run_from_config(cfg: TrainConfig, resume_from: str | Path | None = None) -> dict:
     """Build data + model from a config and run training end-to-end."""
     set_seed(cfg.train.seed)
     device = resolve_device(cfg.train.device)
@@ -513,7 +593,7 @@ def run_from_config(cfg: TrainConfig) -> dict:
     print(
         f"Model: EchoFuseNet | params {count_parameters(model):,} | device {device}"
     )
-    summary = train(model, train_loader, test_loader, cfg, device=device)
+    summary = train(model, train_loader, test_loader, cfg, device=device, resume_from=resume_from)
 
     # §8: capture the full reproducibility record (git hash, seed, config,
     # final metrics) once, next to the checkpoints and in the shared ledger.
@@ -544,6 +624,12 @@ def main() -> None:
     parser.add_argument(
         "--out-dir", default=None, help="Override config train.out_dir."
     )
+    parser.add_argument(
+        "--resume",
+        default=None,
+        help="Path to a last.pt to resume from (restores optimizer/scheduler/"
+             "early-stopping state and continues epoch numbering).",
+    )
     args = parser.parse_args()
 
     cfg = TrainConfig.from_file(args.config)
@@ -552,7 +638,7 @@ def main() -> None:
     if args.out_dir is not None:
         cfg.train.out_dir = args.out_dir
 
-    run_from_config(cfg)
+    run_from_config(cfg, resume_from=args.resume)
 
 
 if __name__ == "__main__":
