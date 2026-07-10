@@ -154,6 +154,13 @@ def run_ablation(
     entries: dict[str, AblationEntry] = {}
     for modalities in modality_sets:
         key = modality_key(modalities)
+
+        save_dir = out_root / key
+        best_model = save_dir / "best.pt"
+
+        if best_model.exists():
+            print(f"Skipping {key} (already completed)")
+            continue
         sub_cfg = copy.deepcopy(cfg)
         sub_cfg.model.modalities = list(modalities)
         sub_cfg.train.out_dir = str(out_root / key)
@@ -240,6 +247,7 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--epochs", type=int, default=None, help="Override epochs per config.")
     parser.add_argument("--out-dir", default=None, help="Override config train.out_dir.")
+
     args = parser.parse_args()
 
     cfg = TrainConfig.from_file(args.config)
