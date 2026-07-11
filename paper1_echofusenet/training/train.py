@@ -22,8 +22,8 @@ Usage
 The heavy lifting (``train``, ``evaluate``) takes loaders + a model as plain
 arguments so it can be unit-tested without downloaded data.
 """
-
 from __future__ import annotations
+
 
 import argparse
 import json
@@ -37,6 +37,7 @@ from torch.utils.data import DataLoader
 
 from ..data.aami import AAMI_CLASSES
 from ..data.dataset import build_dataloaders
+from ..data.transform_cache import DiskTransformCache
 from ..models import EchoFuseNet, count_parameters
 from .config import TrainConfig
 from .losses import build_loss_fn, class_counts_from_loader
@@ -575,6 +576,13 @@ def run_from_config(cfg: TrainConfig, resume_from: str | Path | None = None) -> 
     set_seed(cfg.train.seed)
     device = resolve_device(cfg.train.device)
 
+
+    transform_cache = DiskTransformCache(
+        Path(cfg.train.out_dir) / "transform_cache",
+        max_bytes=int(cfg.data.transform_cache_max_gb * 1024**3),
+    )
+
+
     data_kwargs = dict(
         batch_size=cfg.data.batch_size,
         oversample=cfg.data.oversample,
@@ -584,6 +592,7 @@ def run_from_config(cfg: TrainConfig, resume_from: str | Path | None = None) -> 
         num_workers=cfg.data.num_workers,
         train_records=tuple(cfg.data.train_records) if cfg.data.train_records else None,
         test_records=tuple(cfg.data.test_records) if cfg.data.test_records else None,
+        transform_cache=transform_cache,
     )
     if cfg.data.data_dir:
         data_kwargs["data_dir"] = Path(cfg.data.data_dir)
